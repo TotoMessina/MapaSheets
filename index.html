@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mapa de Locales desde Google Sheets</title>
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+    #controls {
+      padding: 1em;
+      background: #f0f0f0;
+      border-bottom: 1px solid #ccc;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    #map {
+      flex: 1;
+    }
+    button {
+      background: #007bff;
+      color: white;
+      border: none;
+      padding: 0.5em 1em;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #0056b3;
+    }
+    .legend {
+      background: white;
+      padding: 8px 12px;
+      line-height: 1.5;
+      border-radius: 5px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    }
+    .legend div {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .legend-color {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+  </style>
+</head>
+<body>
+  <div id="controls">
+    <button id="btnActualizar">Actualizar datos del Google Sheets</button>
+    <span id="status">Listo.</span>
+  </div>
+  <div id="map"></div>
+
+  <script>
+    const SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRNZDex6_PX_Rk4g-XEMCglM1zKfzlYWa_aQHC1_TDvLO4FsTseBsT3Pfpq-YOrh1Me7MdRtb__7pUN/pub?gid=0&single=true&output=csv";
+
+    const map = L.map('map').setView([-34.6, -58.38], 5);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 18,
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    // --- LEYENDA ---
+    const legend = L.control({ position: "bottomright" });
+    legend.onAdd = function () {
+      const div = L.DomUtil.create("div", "legend");
+      div.innerHTML = `
+        <div><span class="legend-color" style="background:green"></span> Local Creado = Sí (Visitado)</div>
+        <div><span class="legend-color" style="background:blue"></span> Local Creado = No (Sin crear local)</div>
+        <div><span class="legend-color" style="background:red"></span> Sin información</div>
+      `;
+      return div;
+    };
+    legend.addTo(map);
+
+    const status = document.getElementById('status');
+    const btnActualizar = document.getElementById('btnActualizar');
+    let markersLayer = L.layerGroup().addTo(map);
+
+    btnActualizar.addEventListener("click", async () => {
+      markersLayer.clearLayers();
+      status.textContent = "Cargando datos desde Google Sheets...";
+      const datos = await cargarDatos();
+      if (!datos || !datos.length) {
+        status.textContent = "No se pudieron obtener los datos.";
+        return;
+      }
+      status.textContent = `Se cargaron ${datos.length} registros. Geocodificando...`;
+      await geocodificarYMostrar(datos);
+      status.textContent = "Mapa actualizado.";
+    });
+
+    async function cargarDatos() {
+      try {
+        const res = await fetch(SHEET_URL);
+        const csv = await res.text();
+        const filas = csv.split("\n").map(r => r.split(","));
+        const encabezados = filas[0].map(h => h.trim());
+        const direccionIdx = encabezados.indexOf("Dirección");
+        const localCreadoIdx = encabezados.indexOf("Local Creado");
+        if (direccionIdx === -1) return [];
+
+        const datos = [];
+        for (let i = 1; i < filas.length; i++) {
+          const fila = filas[i];
+          if (!fila[direccionIdx]) continue;
+          datos.push({
+            direccion: fila[direccionIdx].trim(),
+            localCreado: localCreadoIdx !== -1 ? fila[localCreadoIdx].trim() : ""
+          });
+        }
+        return datos;
+      } catch (e) {
+        console.error("Error cargando datos:", e);
+        return [];
+      }
+    }
+
+    async function geocodificarYMostrar(datos) {
+      let delay = 1000;
+      for (let i = 0; i < datos.length; i++) {
+        const { direccion, localCreado } = datos[i];
+        try {
+          const coords = await geocode(direccion);
+          if (coords) {
+            const color = colorPorEstado(localCreado);
+            L.circleMarker([coords.lat, coords.lon], {
+              radius: 6,
+              fillColor: color,
+              color: color,
+              fillOpacity: 0.8
+            })
+              .addTo(markersLayer)
+              .bindPopup(`<b>${direccion}</b><br>Local Creado: ${localCreado || "Sin información"}`);
+          }
+        } catch (err) {
+          console.error("Error en", direccion, err);
+        }
+        await esperar(delay);
+      }
+    }
+
+    async function geocode(direccion) {
+      const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(direccion + ", Argentina")}`;
+      const res = await fetch(url, { headers: { "User-Agent": "SheetsMapApp/1.0" } });
+      const data = await res.json();
+      if (data.length > 0) return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) };
+      return null;
+    }
+
+    function esperar(ms) {
+      return new Promise(r => setTimeout(r, ms));
+    }
+
+    function colorPorEstado(valor) {
+      const val = valor.toLowerCase();
+      if (val === "sí" || val === "si") return "green";
+      if (val === "no") return "blue";
+      return "red";
+    }
+
+    // Cargar automáticamente al abrir
+    btnActualizar.click();
+  </script>
+</body>
+</html>
