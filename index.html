@@ -18,12 +18,13 @@
     body { font-family: Arial, sans-serif; margin:0; padding:0; display:flex; flex-direction:column; height:100vh; }
     #controls { padding:1em; background:#f0f0f0; border-bottom:1px solid #ccc; display:flex; align-items:center; gap:0.6em; flex-wrap:wrap; }
     #map { flex:1; }
-    #controls input { padding:0.45em; border-radius:5px; border:1px solid #aaa; }
-    button, select { background:#007bff; color:white; border:none; padding:0.5em 1em; border-radius:5px; cursor:pointer; }
-    select { background:white; color:black; border:1px solid #ccc; cursor:pointer; }
+    #controls input, select, button { padding:0.45em; border-radius:5px; border:1px solid #aaa; }
+    button { background:#007bff; color:white; cursor:pointer; }
+    select { background:white; color:black; cursor:pointer; }
     .legend { background:white; padding:8px 12px; line-height:1.5; border-radius:5px; box-shadow:0 1px 3px rgba(0,0,0,0.3); }
     .legend div { display:flex; align-items:center; gap:5px; }
     .legend-color { width:14px; height:14px; border-radius:50%; display:inline-block; }
+    #contadorEstados { font-size:14px; padding:6px 10px; background:white; border-radius:5px; box-shadow:0 1px 3px rgba(0,0,0,0.3); }
   </style>
 </head>
 <body>
@@ -32,6 +33,16 @@
 
     <label><b>Distribuidor:</b></label>
     <select id="filtroDistribuidor"><option value="TODOS">Todos</option></select>
+
+    <label><b>Estado:</b></label>
+    <select id="filtroEstado">
+      <option value="TODOS">Todos</option>
+      <option value="1">1 - Cliente Relevado</option>
+      <option value="2">2 - Local Visitado No Activo</option>
+      <option value="3">3 - Primer Ingreso</option>
+      <option value="4">4 - Local Completo</option>
+      <option value="5">5 - Local Visitado Activo</option>
+    </select>
 
     <input id="buscarUsuario" placeholder="Buscar usuario...">
     <input id="buscarDireccion" placeholder="Buscar dirección...">
@@ -46,7 +57,6 @@
   <script>
     const SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRNZDex6_PX_Rk4g-XEMCglM1zKfzlYWa_aQHC1_TDvLO4FsTseBsT3Pfpq-YOrh1Me7MdRtb__7pUN/pub?gid=0&single=true&output=csv";
 
-    // 🔥 preferCanvas: true → garantiza que los markers aparezcan en la exportación
     const map = L.map('map', { preferCanvas: true }).setView([-34.6, -58.38], 5);
 
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -55,25 +65,34 @@
       crossOrigin: true
     }).addTo(map);
 
-    // Leyenda
+    // LEYENDA + CONTADORES
     const legend = L.control({ position: "bottomright" });
     legend.onAdd = function () {
       const div = L.DomUtil.create("div", "legend");
       div.innerHTML = `
-        <div><span class="legend-color" style="background:green"></span> Local Creado = Sí</div>
-        <div><span class="legend-color" style="background:blue"></span> Local Creado = No</div>
-        <div><span class="legend-color" style="background:red"></span> Sin información</div>
+        <div><span class="legend-color" style="background:red"></span> 1 = Cliente Relevado</div>
+        <div><span class="legend-color" style="background:orange"></span> 2 = Local Visitado No Activo</div>
+        <div><span class="legend-color" style="background:yellow"></span> 3 = Primer Ingreso</div>
+        <div><span class="legend-color" style="background:blue"></span> 4 = Local Completo</div>
+        <div><span class="legend-color" style="background:green"></span> 5 = Local Visitado Activo</div>
+        <hr>
+        <div id="contadorEstados">
+          Cargando...
+        </div>
       `;
       return div;
     };
     legend.addTo(map);
 
+    const contadoresDIV = () => document.getElementById("contadorEstados");
+
     const status = document.getElementById('status');
-    const btnActualizar = document.getElementById('btnActualizar');
-    const btnExportar = document.getElementById('btnExportar');
     const filtroDistribuidor = document.getElementById('filtroDistribuidor');
+    const filtroEstado = document.getElementById("filtroEstado");
     const buscarUsuario = document.getElementById("buscarUsuario");
     const buscarDireccion = document.getElementById("buscarDireccion");
+    const btnActualizar = document.getElementById('btnActualizar');
+    const btnExportar = document.getElementById('btnExportar');
 
     let markersLayer = L.layerGroup().addTo(map);
     let todosLosPuntos = [];
@@ -83,11 +102,18 @@
       todosLosPuntos = [];
       filtroDistribuidor.innerHTML = `<option value="TODOS">Todos</option>`;
       status.textContent = "Cargando datos desde Google Sheets...";
+
       const datos = await cargarDatos();
-      if (!datos.length) { status.textContent = "No se pudieron obtener los datos."; return; }
+      if (!datos.length) { 
+        status.textContent = "No se pudieron obtener los datos."; 
+        return; 
+      }
+
       status.textContent = "Generando puntos...";
       mostrarPuntos(datos);
       cargarDistribuidores(datos);
+      actualizarContadores();
+
       status.textContent = "Mapa actualizado.";
     });
 
@@ -96,21 +122,24 @@
         const res = await fetch(SHEET_URL);
         const csv = await res.text();
         const parsed = Papa.parse(csv, { header: true, skipEmptyLines: true });
+
         return parsed.data
           .map(row => {
             const lat = parseFloat(row["Latitud"]);
             const lon = parseFloat(row["Longitud"]);
             if (isNaN(lat) || isNaN(lon)) return null;
+
             return {
               lat, lon,
               usuario: row["USUARIO"] || "",
               distribuidor: row["DISTRIBUIDOR"] || "",
               numero: row["Celular"] || "",
               direccion: row["Dirección"] || "",
-              localCreado: row["Local Creado"] || ""
+              estado: row["Estado"] || ""
             };
           })
           .filter(r => r !== null);
+
       } catch (e) {
         console.error("Error cargando datos:", e);
         return [];
@@ -118,7 +147,7 @@
     }
 
     function cargarDistribuidores(datos) {
-      const unicos = [...new Set(datos.map(d => d.distribuidor).filter(x => x && x.trim() !== ""))];
+      const unicos = [...new Set(datos.map(d => d.distribuidor).filter(x => x.trim() !== ""))];
       unicos.sort().forEach(dist => {
         const opt = document.createElement("option");
         opt.value = dist;
@@ -128,12 +157,14 @@
     }
 
     filtroDistribuidor.addEventListener("change", aplicarFiltros);
+    filtroEstado.addEventListener("change", aplicarFiltros);
     buscarUsuario.addEventListener("input", aplicarFiltros);
     buscarDireccion.addEventListener("input", aplicarFiltros);
 
     function mostrarPuntos(datos) {
       datos.forEach(info => {
-        const color = colorPorEstado(info.localCreado);
+        const color = colorPorEstado(info.estado);
+
         const marker = L.circleMarker([info.lat, info.lon], {
           radius: 6,
           fillColor: color,
@@ -145,9 +176,10 @@
           <b>Distribuidor:</b> ${info.distribuidor}<br>
           <b>Número:</b> ${info.numero}<br>
           <b>Dirección:</b> ${info.direccion}<br>
-          <b>Local Creado:</b> ${info.localCreado}
+          <b>Estado:</b> ${info.estado}
         `)
         .addTo(markersLayer);
+
         marker._info = info;
         todosLosPuntos.push(marker);
       });
@@ -155,52 +187,72 @@
 
     function aplicarFiltros() {
       const dist = filtroDistribuidor.value;
+      const estadoSel = filtroEstado.value;
       const user = buscarUsuario.value.toLowerCase();
       const dir = buscarDireccion.value.toLowerCase();
+
       todosLosPuntos.forEach(m => {
         const i = m._info;
-        const coincideDist = (dist === "TODOS" || i.distribuidor === dist);
-        const coincideUser = i.usuario.toLowerCase().includes(user);
-        const coincideDir = i.direccion.toLowerCase().includes(dir);
-        const visible = coincideDist && coincideUser && coincideDir;
+
+        const okDist = (dist === "TODOS" || i.distribuidor === dist);
+        const okEstado = (estadoSel === "TODOS" || i.estado === estadoSel);
+        const okUser = i.usuario.toLowerCase().includes(user);
+        const okDir = i.direccion.toLowerCase().includes(dir);
+
+        const visible = okDist && okEstado && okUser && okDir;
         m.setStyle({ opacity: visible ? 1 : 0, fillOpacity: visible ? 0.8 : 0 });
       });
+
+      actualizarContadores();
     }
 
-    function colorPorEstado(valor) {
-      const v = (valor || "").toLowerCase();
-      if (v === "si" || v === "sí") return "green";
-      if (v === "no") return "blue";
-      return "red";
+    function actualizarContadores() {
+      const conteo = {1:0,2:0,3:0,4:0,5:0};
+
+      todosLosPuntos.forEach(m => {
+        if (m.options.opacity === 1) {
+          const est = parseInt(m._info.estado);
+          if (conteo[est] !== undefined) conteo[est]++;
+        }
+      });
+
+      contadoresDIV().innerHTML = `
+        <b>Conteo visible:</b><br>
+        🔴 1: ${conteo[1]}<br>
+        🟠 2: ${conteo[2]}<br>
+        🟡 3: ${conteo[3]}<br>
+        🔵 4: ${conteo[4]}<br>
+        🟢 5: ${conteo[5]}
+      `;
     }
 
-    // --------------------------
-    // EXPORTACIÓN A PNG
-    // --------------------------
+    function colorPorEstado(estado) {
+      switch (parseInt(estado)) {
+        case 1: return "red";
+        case 2: return "orange";
+        case 3: return "yellow";
+        case 4: return "blue";
+        case 5: return "green";
+        default: return "gray";
+      }
+    }
+
     btnExportar.addEventListener("click", () => {
       status.textContent = "Generando imagen...";
-      try {
-        leafletImage(map, function(err, canvas) {
-          if (err) {
-            console.error("Error al generar imagen:", err);
-            status.textContent = "Error al generar imagen.";
-            return;
-          }
-
-          const dataURL = canvas.toDataURL("image/png");
-          const link = document.createElement("a");
-          link.download = "mapa_leaflet.png";
-          link.href = dataURL;
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-
-          status.textContent = "Descarga iniciada.";
-        });
-      } catch (e) {
-        console.error(e);
-        status.textContent = "No se pudo generar la imagen.";
-      }
+      leafletImage(map, function(err, canvas) {
+        if (err) {
+          status.textContent = "Error al generar imagen.";
+          return;
+        }
+        const dataURL = canvas.toDataURL("image/png");
+        const link = document.createElement("a");
+        link.download = "mapa_leaflet.png";
+        link.href = dataURL;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        status.textContent = "Descarga iniciada.";
+      });
     });
 
     btnActualizar.click();
