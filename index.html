@@ -8,6 +8,9 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
+  <!-- PapaParse - lectura correcta de CSV -->
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -115,41 +118,26 @@
       try {
         const res = await fetch(SHEET_URL);
         const csv = await res.text();
-        const filas = csv.split("\n").map(r => r.split(","));
-        const encabezados = filas[0].map(h => h.trim());
 
-        // Índices de columnas
-        const latIdx = encabezados.indexOf("Latitud");
-        const lonIdx = encabezados.indexOf("Longitud");
-        const usuarioIdx = encabezados.indexOf("USUARIO");
-        const distribuidorIdx = encabezados.indexOf("DISTRIBUIDOR");
-        const numeroIdx = encabezados.indexOf("Celular");
-        const direccionIdx = encabezados.indexOf("Dirección");
-        const localCreadoIdx = encabezados.indexOf("Local Creado");
+        const parsed = Papa.parse(csv, { header: true, skipEmptyLines: true });
 
-        if (latIdx === -1 || lonIdx === -1) return [];
+        return parsed.data
+          .map(row => {
+            const lat = parseFloat(row["Latitud"]);
+            const lon = parseFloat(row["Longitud"]);
+            if (isNaN(lat) || isNaN(lon)) return null;
 
-        const datos = [];
-
-        for (let i = 1; i < filas.length; i++) {
-          const fila = filas[i];
-
-          const lat = parseFloat(fila[latIdx]);
-          const lon = parseFloat(fila[lonIdx]);
-          if (isNaN(lat) || isNaN(lon)) continue;
-
-          datos.push({
-            lat,
-            lon,
-            usuario: usuarioIdx !== -1 ? fila[usuarioIdx].trim() : "",
-            distribuidor: distribuidorIdx !== -1 ? fila[distribuidorIdx].trim() : "",
-            numero: numeroIdx !== -1 ? fila[numeroIdx].trim() : "",
-            direccion: direccionIdx !== -1 ? fila[direccionIdx].trim() : "",
-            localCreado: localCreadoIdx !== -1 ? fila[localCreadoIdx].trim() : ""
-          });
-        }
-
-        return datos;
+            return {
+              lat,
+              lon,
+              usuario: row["USUARIO"] || "",
+              distribuidor: row["DISTRIBUIDOR"] || "",
+              numero: row["Celular"] || "",
+              direccion: row["Dirección"] || "",
+              localCreado: row["Local Creado"] || ""
+            };
+          })
+          .filter(r => r !== null);
 
       } catch (e) {
         console.error("Error cargando datos:", e);
@@ -169,23 +157,22 @@
         })
         .addTo(markersLayer)
         .bindPopup(`
-          <b>Usuario:</b> ${usuario || "—"}<br>
-          <b>Distribuidor:</b> ${distribuidor || "—"}<br>
-          <b>Número:</b> ${numero || "—"}<br>
-          <b>Dirección:</b> ${direccion || "—"}<br>
-          <b>Local Creado:</b> ${localCreado || "Sin información"}
+          <b>Usuario:</b> ${usuario}<br>
+          <b>Distribuidor:</b> ${distribuidor}<br>
+          <b>Número:</b> ${numero}<br>
+          <b>Dirección:</b> ${direccion}<br>
+          <b>Local Creado:</b> ${localCreado}
         `);
       });
     }
 
     function colorPorEstado(valor) {
-      const val = valor.toLowerCase();
-      if (val === "sí" || val === "si") return "green";
-      if (val === "no") return "blue";
+      const v = valor.toLowerCase();
+      if (v === "si" || v === "sí") return "green";
+      if (v === "no") return "blue";
       return "red";
     }
 
-    // Cargar automáticamente
     btnActualizar.click();
   </script>
 </body>
