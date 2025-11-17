@@ -4,11 +4,10 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Mapa de Locales desde Google Sheets</title>
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-  />
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -60,11 +59,13 @@
     }
   </style>
 </head>
+
 <body>
   <div id="controls">
     <button id="btnActualizar">Actualizar datos del Google Sheets</button>
     <span id="status">Listo.</span>
   </div>
+
   <div id="map"></div>
 
   <script>
@@ -81,8 +82,8 @@
     legend.onAdd = function () {
       const div = L.DomUtil.create("div", "legend");
       div.innerHTML = `
-        <div><span class="legend-color" style="background:green"></span> Local Creado = Sí (Visitado)</div>
-        <div><span class="legend-color" style="background:blue"></span> Local Creado = No (Sin crear local)</div>
+        <div><span class="legend-color" style="background:green"></span> Local Creado = Sí</div>
+        <div><span class="legend-color" style="background:blue"></span> Local Creado = No</div>
         <div><span class="legend-color" style="background:red"></span> Sin información</div>
       `;
       return div;
@@ -96,13 +97,17 @@
     btnActualizar.addEventListener("click", async () => {
       markersLayer.clearLayers();
       status.textContent = "Cargando datos desde Google Sheets...";
+
       const datos = await cargarDatos();
       if (!datos || !datos.length) {
         status.textContent = "No se pudieron obtener los datos.";
         return;
       }
-      status.textContent = `Se cargaron ${datos.length} registros. Geocodificando...`;
-      await geocodificarYMostrar(datos);
+
+      status.textContent = `Se cargaron ${datos.length} registros. Dibujando...`;
+
+      mostrarPuntos(datos);
+
       status.textContent = "Mapa actualizado.";
     });
 
@@ -112,60 +117,65 @@
         const csv = await res.text();
         const filas = csv.split("\n").map(r => r.split(","));
         const encabezados = filas[0].map(h => h.trim());
+
+        // Índices de columnas
+        const latIdx = encabezados.indexOf("Latitud");
+        const lonIdx = encabezados.indexOf("Longitud");
+        const usuarioIdx = encabezados.indexOf("USUARIO");
+        const distribuidorIdx = encabezados.indexOf("DISTRIBUIDOR");
+        const numeroIdx = encabezados.indexOf("Celular");
         const direccionIdx = encabezados.indexOf("Dirección");
         const localCreadoIdx = encabezados.indexOf("Local Creado");
-        if (direccionIdx === -1) return [];
+
+        if (latIdx === -1 || lonIdx === -1) return [];
 
         const datos = [];
+
         for (let i = 1; i < filas.length; i++) {
           const fila = filas[i];
-          if (!fila[direccionIdx]) continue;
+
+          const lat = parseFloat(fila[latIdx]);
+          const lon = parseFloat(fila[lonIdx]);
+          if (isNaN(lat) || isNaN(lon)) continue;
+
           datos.push({
-            direccion: fila[direccionIdx].trim(),
+            lat,
+            lon,
+            usuario: usuarioIdx !== -1 ? fila[usuarioIdx].trim() : "",
+            distribuidor: distribuidorIdx !== -1 ? fila[distribuidorIdx].trim() : "",
+            numero: numeroIdx !== -1 ? fila[numeroIdx].trim() : "",
+            direccion: direccionIdx !== -1 ? fila[direccionIdx].trim() : "",
             localCreado: localCreadoIdx !== -1 ? fila[localCreadoIdx].trim() : ""
           });
         }
+
         return datos;
+
       } catch (e) {
         console.error("Error cargando datos:", e);
         return [];
       }
     }
 
-    async function geocodificarYMostrar(datos) {
-      let delay = 1000;
-      for (let i = 0; i < datos.length; i++) {
-        const { direccion, localCreado } = datos[i];
-        try {
-          const coords = await geocode(direccion);
-          if (coords) {
-            const color = colorPorEstado(localCreado);
-            L.circleMarker([coords.lat, coords.lon], {
-              radius: 6,
-              fillColor: color,
-              color: color,
-              fillOpacity: 0.8
-            })
-              .addTo(markersLayer)
-              .bindPopup(`<b>${direccion}</b><br>Local Creado: ${localCreado || "Sin información"}`);
-          }
-        } catch (err) {
-          console.error("Error en", direccion, err);
-        }
-        await esperar(delay);
-      }
-    }
+    function mostrarPuntos(datos) {
+      datos.forEach(({ lat, lon, usuario, distribuidor, numero, direccion, localCreado }) => {
+        const color = colorPorEstado(localCreado);
 
-    async function geocode(direccion) {
-      const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(direccion + ", Argentina")}`;
-      const res = await fetch(url, { headers: { "User-Agent": "SheetsMapApp/1.0" } });
-      const data = await res.json();
-      if (data.length > 0) return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) };
-      return null;
-    }
-
-    function esperar(ms) {
-      return new Promise(r => setTimeout(r, ms));
+        L.circleMarker([lat, lon], {
+          radius: 6,
+          fillColor: color,
+          color: color,
+          fillOpacity: 0.8
+        })
+        .addTo(markersLayer)
+        .bindPopup(`
+          <b>Usuario:</b> ${usuario || "—"}<br>
+          <b>Distribuidor:</b> ${distribuidor || "—"}<br>
+          <b>Número:</b> ${numero || "—"}<br>
+          <b>Dirección:</b> ${direccion || "—"}<br>
+          <b>Local Creado:</b> ${localCreado || "Sin información"}
+        `);
+      });
     }
 
     function colorPorEstado(valor) {
@@ -175,7 +185,7 @@
       return "red";
     }
 
-    // Cargar automáticamente al abrir
+    // Cargar automáticamente
     btnActualizar.click();
   </script>
 </body>
