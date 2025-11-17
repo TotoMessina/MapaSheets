@@ -3,80 +3,40 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Mapa de Locales desde Google Sheets</title>
+  <title>Mapa de Locales desde Google Sheets - Export corregido</title>
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-  <!-- PapaParse - lectura correcta de CSV -->
+  <!-- PapaParse -->
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 
+  <!-- leaflet-image -->
+  <script src="https://unpkg.com/leaflet-image/leaflet-image.js"></script>
+
   <style>
-    body {
-      font-family: Arial, sans-serif;
-      margin: 0;
-      padding: 0;
-      display: flex;
-      flex-direction: column;
-      height: 100vh;
-    }
-    #controls {
-      padding: 1em;
-      background: #f0f0f0;
-      border-bottom: 1px solid #ccc;
-      display: flex;
-      align-items: center;
-      gap: 1em;
-    }
-    #map {
-      flex: 1;
-    }
-    button, select {
-      background: #007bff;
-      color: white;
-      border: none;
-      padding: 0.5em 1em;
-      border-radius: 5px;
-      cursor: pointer;
-    }
-    select {
-      background: white;
-      color: black;
-      border: 1px solid #ccc;
-      cursor: pointer;
-    }
-    button:hover {
-      background: #0056b3;
-    }
-    .legend {
-      background: white;
-      padding: 8px 12px;
-      line-height: 1.5;
-      border-radius: 5px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
-    }
-    .legend div {
-      display: flex;
-      align-items: center;
-      gap: 5px;
-    }
-    .legend-color {
-      width: 14px;
-      height: 14px;
-      border-radius: 50%;
-      display: inline-block;
-    }
+    body { font-family: Arial, sans-serif; margin:0; padding:0; display:flex; flex-direction:column; height:100vh; }
+    #controls { padding:1em; background:#f0f0f0; border-bottom:1px solid #ccc; display:flex; align-items:center; gap:0.6em; flex-wrap:wrap; }
+    #map { flex:1; }
+    #controls input { padding:0.45em; border-radius:5px; border:1px solid #aaa; }
+    button, select { background:#007bff; color:white; border:none; padding:0.5em 1em; border-radius:5px; cursor:pointer; }
+    select { background:white; color:black; border:1px solid #ccc; cursor:pointer; }
+    .legend { background:white; padding:8px 12px; line-height:1.5; border-radius:5px; box-shadow:0 1px 3px rgba(0,0,0,0.3); }
+    .legend div { display:flex; align-items:center; gap:5px; }
+    .legend-color { width:14px; height:14px; border-radius:50%; display:inline-block; }
   </style>
 </head>
-
 <body>
   <div id="controls">
     <button id="btnActualizar">Actualizar datos</button>
 
-    <label><b>Filtrar por distribuidor:</b></label>
-    <select id="filtroDistribuidor">
-      <option value="TODOS">Todos</option>
-    </select>
+    <label><b>Distribuidor:</b></label>
+    <select id="filtroDistribuidor"><option value="TODOS">Todos</option></select>
+
+    <input id="buscarUsuario" placeholder="Buscar usuario...">
+    <input id="buscarDireccion" placeholder="Buscar dirección...">
+
+    <button id="btnExportar">Exportar PNG</button>
 
     <span id="status">Listo.</span>
   </div>
@@ -86,13 +46,16 @@
   <script>
     const SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRNZDex6_PX_Rk4g-XEMCglM1zKfzlYWa_aQHC1_TDvLO4FsTseBsT3Pfpq-YOrh1Me7MdRtb__7pUN/pub?gid=0&single=true&output=csv";
 
-    const map = L.map('map').setView([-34.6, -58.38], 5);
+    // 🔥 preferCanvas: true → garantiza que los markers aparezcan en la exportación
+    const map = L.map('map', { preferCanvas: true }).setView([-34.6, -58.38], 5);
+
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 18,
-      attribution: '&copy; OpenStreetMap contributors'
+      attribution: '&copy; OpenStreetMap contributors',
+      crossOrigin: true
     }).addTo(map);
 
-    // --- LEYENDA ---
+    // Leyenda
     const legend = L.control({ position: "bottomright" });
     legend.onAdd = function () {
       const div = L.DomUtil.create("div", "legend");
@@ -107,29 +70,24 @@
 
     const status = document.getElementById('status');
     const btnActualizar = document.getElementById('btnActualizar');
+    const btnExportar = document.getElementById('btnExportar');
     const filtroDistribuidor = document.getElementById('filtroDistribuidor');
+    const buscarUsuario = document.getElementById("buscarUsuario");
+    const buscarDireccion = document.getElementById("buscarDireccion");
 
     let markersLayer = L.layerGroup().addTo(map);
-    let todosLosPuntos = []; // ← Guardamos los markers para poder filtrarlos
+    let todosLosPuntos = [];
 
     btnActualizar.addEventListener("click", async () => {
       markersLayer.clearLayers();
       todosLosPuntos = [];
       filtroDistribuidor.innerHTML = `<option value="TODOS">Todos</option>`;
-
       status.textContent = "Cargando datos desde Google Sheets...";
-
       const datos = await cargarDatos();
-      if (!datos.length) {
-        status.textContent = "No se pudieron obtener los datos.";
-        return;
-      }
-
+      if (!datos.length) { status.textContent = "No se pudieron obtener los datos."; return; }
       status.textContent = "Generando puntos...";
-
       mostrarPuntos(datos);
       cargarDistribuidores(datos);
-
       status.textContent = "Mapa actualizado.";
     });
 
@@ -137,18 +95,14 @@
       try {
         const res = await fetch(SHEET_URL);
         const csv = await res.text();
-
         const parsed = Papa.parse(csv, { header: true, skipEmptyLines: true });
-
         return parsed.data
           .map(row => {
             const lat = parseFloat(row["Latitud"]);
             const lon = parseFloat(row["Longitud"]);
             if (isNaN(lat) || isNaN(lon)) return null;
-
             return {
-              lat,
-              lon,
+              lat, lon,
               usuario: row["USUARIO"] || "",
               distribuidor: row["DISTRIBUIDOR"] || "",
               numero: row["Celular"] || "",
@@ -157,7 +111,6 @@
             };
           })
           .filter(r => r !== null);
-
       } catch (e) {
         console.error("Error cargando datos:", e);
         return [];
@@ -165,8 +118,7 @@
     }
 
     function cargarDistribuidores(datos) {
-      const unicos = [...new Set(datos.map(d => d.distribuidor).filter(x => x.trim() !== ""))];
-
+      const unicos = [...new Set(datos.map(d => d.distribuidor).filter(x => x && x.trim() !== ""))];
       unicos.sort().forEach(dist => {
         const opt = document.createElement("option");
         opt.value = dist;
@@ -175,14 +127,13 @@
       });
     }
 
-    filtroDistribuidor.addEventListener("change", () => {
-      resaltarDistribuidor(filtroDistribuidor.value);
-    });
+    filtroDistribuidor.addEventListener("change", aplicarFiltros);
+    buscarUsuario.addEventListener("input", aplicarFiltros);
+    buscarDireccion.addEventListener("input", aplicarFiltros);
 
     function mostrarPuntos(datos) {
       datos.forEach(info => {
         const color = colorPorEstado(info.localCreado);
-        
         const marker = L.circleMarker([info.lat, info.lon], {
           radius: 6,
           fillColor: color,
@@ -197,35 +148,60 @@
           <b>Local Creado:</b> ${info.localCreado}
         `)
         .addTo(markersLayer);
-
-        marker._info = info; // guardamos la info dentro del marker
+        marker._info = info;
         todosLosPuntos.push(marker);
       });
     }
 
-    // 🔥 RESALTADO POR DISTRIBUIDOR
-    function resaltarDistribuidor(nombre) {
+    function aplicarFiltros() {
+      const dist = filtroDistribuidor.value;
+      const user = buscarUsuario.value.toLowerCase();
+      const dir = buscarDireccion.value.toLowerCase();
       todosLosPuntos.forEach(m => {
-        const coincide = m._info.distribuidor === nombre;
-
-        if (nombre === "TODOS") {
-          m.setStyle({ opacity: 1, fillOpacity: 0.8 });
-        } else {
-          if (coincide) {
-            m.setStyle({ opacity: 1, fillOpacity: 1, weight: 2 });
-          } else {
-            m.setStyle({ opacity: 0.2, fillOpacity: 0.2, weight: 1 });
-          }
-        }
+        const i = m._info;
+        const coincideDist = (dist === "TODOS" || i.distribuidor === dist);
+        const coincideUser = i.usuario.toLowerCase().includes(user);
+        const coincideDir = i.direccion.toLowerCase().includes(dir);
+        const visible = coincideDist && coincideUser && coincideDir;
+        m.setStyle({ opacity: visible ? 1 : 0, fillOpacity: visible ? 0.8 : 0 });
       });
     }
 
     function colorPorEstado(valor) {
-      const v = valor.toLowerCase();
+      const v = (valor || "").toLowerCase();
       if (v === "si" || v === "sí") return "green";
       if (v === "no") return "blue";
       return "red";
     }
+
+    // --------------------------
+    // EXPORTACIÓN A PNG
+    // --------------------------
+    btnExportar.addEventListener("click", () => {
+      status.textContent = "Generando imagen...";
+      try {
+        leafletImage(map, function(err, canvas) {
+          if (err) {
+            console.error("Error al generar imagen:", err);
+            status.textContent = "Error al generar imagen.";
+            return;
+          }
+
+          const dataURL = canvas.toDataURL("image/png");
+          const link = document.createElement("a");
+          link.download = "mapa_leaflet.png";
+          link.href = dataURL;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+
+          status.textContent = "Descarga iniciada.";
+        });
+      } catch (e) {
+        console.error(e);
+        status.textContent = "No se pudo generar la imagen.";
+      }
+    });
 
     btnActualizar.click();
   </script>
