@@ -26,17 +26,23 @@
       border-bottom: 1px solid #ccc;
       display: flex;
       align-items: center;
-      justify-content: space-between;
+      gap: 1em;
     }
     #map {
       flex: 1;
     }
-    button {
+    button, select {
       background: #007bff;
       color: white;
       border: none;
       padding: 0.5em 1em;
       border-radius: 5px;
+      cursor: pointer;
+    }
+    select {
+      background: white;
+      color: black;
+      border: 1px solid #ccc;
       cursor: pointer;
     }
     button:hover {
@@ -65,7 +71,13 @@
 
 <body>
   <div id="controls">
-    <button id="btnActualizar">Actualizar datos del Google Sheets</button>
+    <button id="btnActualizar">Actualizar datos</button>
+
+    <label><b>Filtrar por distribuidor:</b></label>
+    <select id="filtroDistribuidor">
+      <option value="TODOS">Todos</option>
+    </select>
+
     <span id="status">Listo.</span>
   </div>
 
@@ -95,21 +107,28 @@
 
     const status = document.getElementById('status');
     const btnActualizar = document.getElementById('btnActualizar');
+    const filtroDistribuidor = document.getElementById('filtroDistribuidor');
+
     let markersLayer = L.layerGroup().addTo(map);
+    let todosLosPuntos = []; // ← Guardamos los markers para poder filtrarlos
 
     btnActualizar.addEventListener("click", async () => {
       markersLayer.clearLayers();
+      todosLosPuntos = [];
+      filtroDistribuidor.innerHTML = `<option value="TODOS">Todos</option>`;
+
       status.textContent = "Cargando datos desde Google Sheets...";
 
       const datos = await cargarDatos();
-      if (!datos || !datos.length) {
+      if (!datos.length) {
         status.textContent = "No se pudieron obtener los datos.";
         return;
       }
 
-      status.textContent = `Se cargaron ${datos.length} registros. Dibujando...`;
+      status.textContent = "Generando puntos...";
 
       mostrarPuntos(datos);
+      cargarDistribuidores(datos);
 
       status.textContent = "Mapa actualizado.";
     });
@@ -145,24 +164,59 @@
       }
     }
 
-    function mostrarPuntos(datos) {
-      datos.forEach(({ lat, lon, usuario, distribuidor, numero, direccion, localCreado }) => {
-        const color = colorPorEstado(localCreado);
+    function cargarDistribuidores(datos) {
+      const unicos = [...new Set(datos.map(d => d.distribuidor).filter(x => x.trim() !== ""))];
 
-        L.circleMarker([lat, lon], {
+      unicos.sort().forEach(dist => {
+        const opt = document.createElement("option");
+        opt.value = dist;
+        opt.textContent = dist;
+        filtroDistribuidor.appendChild(opt);
+      });
+    }
+
+    filtroDistribuidor.addEventListener("change", () => {
+      resaltarDistribuidor(filtroDistribuidor.value);
+    });
+
+    function mostrarPuntos(datos) {
+      datos.forEach(info => {
+        const color = colorPorEstado(info.localCreado);
+        
+        const marker = L.circleMarker([info.lat, info.lon], {
           radius: 6,
           fillColor: color,
           color: color,
           fillOpacity: 0.8
         })
-        .addTo(markersLayer)
         .bindPopup(`
-          <b>Usuario:</b> ${usuario}<br>
-          <b>Distribuidor:</b> ${distribuidor}<br>
-          <b>Número:</b> ${numero}<br>
-          <b>Dirección:</b> ${direccion}<br>
-          <b>Local Creado:</b> ${localCreado}
-        `);
+          <b>Usuario:</b> ${info.usuario}<br>
+          <b>Distribuidor:</b> ${info.distribuidor}<br>
+          <b>Número:</b> ${info.numero}<br>
+          <b>Dirección:</b> ${info.direccion}<br>
+          <b>Local Creado:</b> ${info.localCreado}
+        `)
+        .addTo(markersLayer);
+
+        marker._info = info; // guardamos la info dentro del marker
+        todosLosPuntos.push(marker);
+      });
+    }
+
+    // 🔥 RESALTADO POR DISTRIBUIDOR
+    function resaltarDistribuidor(nombre) {
+      todosLosPuntos.forEach(m => {
+        const coincide = m._info.distribuidor === nombre;
+
+        if (nombre === "TODOS") {
+          m.setStyle({ opacity: 1, fillOpacity: 0.8 });
+        } else {
+          if (coincide) {
+            m.setStyle({ opacity: 1, fillOpacity: 1, weight: 2 });
+          } else {
+            m.setStyle({ opacity: 0.2, fillOpacity: 0.2, weight: 1 });
+          }
+        }
       });
     }
 
